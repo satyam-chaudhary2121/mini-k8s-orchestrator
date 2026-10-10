@@ -1,10 +1,36 @@
+import os
+import threading
+import time
+from contextlib import asynccontextmanager
+
 import docker
+import httpx
 from docker.errors import NotFound
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-app = FastAPI(title="Worker Agent")
+CONTROL_PLANE = os.getenv("CONTROL_PLANE_URL", "http://127.0.0.1:8000")
+NODE_NAME = os.getenv("NODE_NAME", "node-1")
+
 client = docker.from_env()
+
+
+def heartbeat_loop():
+    while True:
+        try:
+            httpx.post(f"{CONTROL_PLANE}/nodes/{NODE_NAME}/heartbeat", timeout=3)
+        except Exception:
+            pass
+        time.sleep(5)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    threading.Thread(target=heartbeat_loop, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="Worker Agent", lifespan=lifespan)
 
 
 class RunRequest(BaseModel):

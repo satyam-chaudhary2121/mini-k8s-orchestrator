@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -24,3 +26,15 @@ def register_node(data: NodeCreate, db: Session = Depends(get_db)):
 @router.get("", response_model=list[NodeOut])
 def list_nodes(db: Session = Depends(get_db)):
     return list(db.scalars(select(Node)))
+
+
+@router.post("/{name}/heartbeat", response_model=NodeOut)
+def heartbeat(name: str, db: Session = Depends(get_db)):
+    node = db.scalar(select(Node).where(Node.name == name))
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    node.last_heartbeat = datetime.utcnow()
+    node.status = "Ready"
+    db.commit()
+    db.refresh(node)
+    return node
