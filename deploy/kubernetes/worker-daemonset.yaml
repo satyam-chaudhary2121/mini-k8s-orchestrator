@@ -1,0 +1,27 @@
+# Runs one worker agent per node that has a *Docker* runtime. Mounting the host Docker socket
+# gives the agent root-equivalent control of the node: only deploy on clusters you own, and note
+# that containerd/CRI-O-only clusters (most modern distros) have no Docker socket to mount.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: worker-agent, namespace: orchestrator}
+spec:
+  selector: {matchLabels: {app: worker-agent}}
+  template:
+    metadata: {labels: {app: worker-agent}}
+    spec:
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: agent
+          image: ghcr.io/OWNER/mini-k8s-orchestrator-worker:latest
+          env:
+            - {name: CONTROL_PLANE_URL, value: "http://api-server:8000"}
+            - {name: WORKER_API_KEY, valueFrom: {secretKeyRef: {name: orchestrator-secrets, key: WORKER_API_KEY}}}
+            - {name: NODE_HOSTNAME, valueFrom: {fieldRef: {fieldPath: spec.nodeName}}}
+            - {name: ADVERTISE_IP, valueFrom: {fieldRef: {fieldPath: status.hostIP}}}
+            - {name: AGENT_URL, value: "http://$(ADVERTISE_IP):9000"}
+          ports: [{containerPort: 9000, hostPort: 9000}]
+          volumeMounts: [{name: docker-sock, mountPath: /var/run/docker.sock}]
+          resources: {requests: {cpu: 50m, memory: 64Mi}}
+      volumes:
+        - name: docker-sock
+          hostPath: {path: /var/run/docker.sock, type: Socket}

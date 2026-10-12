@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: Service
+metadata: {name: postgres, namespace: orchestrator}
+spec:
+  clusterIP: None
+  selector: {app: postgres}
+  ports: [{port: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: postgres, namespace: orchestrator}
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector: {matchLabels: {app: postgres}}
+  template:
+    metadata: {labels: {app: postgres}}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - {name: POSTGRES_USER, value: orchestrator}
+            - {name: POSTGRES_DB, value: orchestrator}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: orchestrator-secrets, key: POSTGRES_PASSWORD}}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports: [{containerPort: 5432}]
+          readinessProbe:
+            exec: {command: [pg_isready, -U, orchestrator]}
+            periodSeconds: 5
+          resources: {requests: {cpu: 100m, memory: 256Mi}}
+          volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 5Gi}}

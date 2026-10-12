@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mini-k8s-orchestrator"
+version = "0.1.0"
+description = "Educational Kubernetes-inspired container orchestrator (control plane + worker agents)"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "sqlalchemy>=2.0.30",
+  "psycopg2-binary>=2.9",
+  "alembic>=1.13",
+  "pydantic>=2.7",
+  "pydantic-settings>=2.3",
+  "httpx>=0.27",
+  "prometheus-client>=0.20",
+  "docker>=7.1",
+  "typer>=0.12",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5", "black>=24", "mypy>=1.10", "types-PyYAML", "pre-commit"]
+
+[project.scripts]
+orchestrator = "cli.main:app"
+orchestrator-api = "orchestrator.api.__main__:main"
+orchestrator-worker = "worker.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["orchestrator*", "worker*", "cli*", "contracts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+  "docker: needs a reachable Docker daemon",
+  "integration: needs PostgreSQL (TEST_DATABASE_URL)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "SIM"]
+ignore = ["S101", "B008"]
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "B"]
+"migrations/**" = ["E501", "I", "UP"]
+
+[tool.black]
+line-length = 100
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+warn_unused_ignores = true
+ignore_missing_imports = true
+check_untyped_defs = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false

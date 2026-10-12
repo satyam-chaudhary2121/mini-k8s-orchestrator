@@ -1,0 +1,40 @@
+apiVersion: orchestrator/v1
+kind: Deployment
+
+metadata:
+  name: nginx
+  labels:
+    app: nginx
+
+spec:
+  replicas: 3
+
+  template:
+    image: nginx:alpine
+
+    resources:
+      cpu: 0.25
+      memory: 256
+
+    ports:
+      - containerPort: 80
+
+    healthCheck:
+      type: http
+      path: /
+      port: 80
+      interval: 5
+      timeout: 2
+      failureThreshold: 3
+---
+apiVersion: orchestrator/v1
+kind: Service
+
+metadata:
+  name: nginx
+
+spec:
+  selector:
+    app: nginx
+  port: 80
+  targetPort: 80

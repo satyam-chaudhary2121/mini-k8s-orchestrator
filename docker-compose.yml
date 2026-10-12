@@ -1,14 +1,122 @@
+# Local cluster: 1 control plane + 2 workers, each worker with its OWN Docker daemon (DinD) so
+# "stop worker-1" really means that node's containers go away. See docs/operations/docker-socket.md
+name: mini-k8s
+
+x-worker: &worker
+  build: {context: ., target: worker}
+  restart: unless-stopped
+  depends_on:
+    api-server: {condition: service_healthy}
+  environment: &worker-env
+    CONTROL_PLANE_URL: http://api-server:8000
+    WORKER_API_KEY: ${WORKER_API_KEY:?set WORKER_API_KEY in .env}
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    AGENT_PORT: "9000"
+
 services:
-  db:
-    image: postgres:16
+  postgres:
+    image: postgres:16-alpine
     environment:
-      POSTGRES_USER: orchestrator
-      POSTGRES_PASSWORD: orchestrator
-      POSTGRES_DB: orchestrator
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:?}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api-server:
+    build: {context: ., target: api}
+    restart: unless-stopped
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:?}
+      OPERATOR_API_KEY: ${OPERATOR_API_KEY:-}
+      READ_ONLY_API_KEY: ${READ_ONLY_API_KEY:-}
+      WORKER_API_KEY: ${WORKER_API_KEY:?}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HEARTBEAT_INTERVAL: ${HEARTBEAT_INTERVAL:-10}
+      NODE_UNHEALTHY_AFTER: ${NODE_UNHEALTHY_AFTER:-30}
+      NODE_TIMEOUT: ${NODE_TIMEOUT:-60}
+      RECONCILIATION_INTERVAL: ${RECONCILIATION_INTERVAL:-2}
+      SCHEDULER_STRATEGY: ${SCHEDULER_STRATEGY:-least_loaded}
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready').status==200 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    stop_grace_period: 15s
+
+  # Each worker owns a private Docker daemon. TLS is disabled: the daemon port is reachable only
+  # on the private compose network. Do NOT publish these ports or reuse this setup in production.
+  dind-1:
+    image: docker:27-dind
+    privileged: true
+    command: ["--host=tcp://0.0.0.0:2375", "--tls=false"]
+    environment: {DOCKER_TLS_CERTDIR: ""}
+    volumes: [dind1:/var/lib/docker]
+    restart: unless-stopped
+
+  dind-2:
+    image: docker:27-dind
+    privileged: true
+    command: ["--host=tcp://0.0.0.0:2375", "--tls=false"]
+    environment: {DOCKER_TLS_CERTDIR: ""}
+    volumes: [dind2:/var/lib/docker]
+    restart: unless-stopped
+
+  worker-1:
+    <<: *worker
+    depends_on:
+      api-server: {condition: service_healthy}
+      dind-1: {condition: service_started}
+    environment:
+      <<: *worker-env
+      DOCKER_HOST: tcp://dind-1:2375
+      NODE_HOSTNAME: worker-1
+      ADVERTISE_IP: dind-1          # published container ports live on the DinD host
+      AGENT_URL: http://worker-1:9000
+      NODE_CPU: "2"
+      NODE_MEMORY_MB: "2048"
+      NODE_LABELS: '{"zone":"a"}'
+
+  worker-2:
+    <<: *worker
+    depends_on:
+      api-server: {condition: service_healthy}
+      dind-2: {condition: service_started}
+    environment:
+      <<: *worker-env
+      DOCKER_HOST: tcp://dind-2:2375
+      NODE_HOSTNAME: worker-2
+      ADVERTISE_IP: dind-2
+      AGENT_URL: http://worker-2:9000
+      NODE_CPU: "2"
+      NODE_MEMORY_MB: "2048"
+      NODE_LABELS: '{"zone":"b"}'
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes: [./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro]
+    ports: ["9090:9090"]
+    depends_on: [api-server]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]
+    depends_on: [prometheus]
 
 volumes:
   pgdata:
+  dind1:
+  dind2:

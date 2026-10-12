@@ -1,0 +1,40 @@
+# Single replica by design: the control plane has no leader election yet (see docs/architecture/failure-model.md).
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: api-server, namespace: orchestrator}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: api-server}}
+  template:
+    metadata:
+      labels: {app: api-server}
+      annotations: {prometheus.io/scrape: "true", prometheus.io/port: "8000", prometheus.io/path: /metrics}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 10001}
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: api
+          image: ghcr.io/OWNER/mini-k8s-orchestrator-api:latest  # replace OWNER / pin a digest
+          envFrom: [{configMapRef: {name: orchestrator-config}}]
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: orchestrator-secrets, key: POSTGRES_PASSWORD}}
+            - name: DATABASE_URL
+              value: postgresql+psycopg2://orchestrator:$(POSTGRES_PASSWORD)@postgres:5432/orchestrator
+            - {name: ADMIN_API_KEY, valueFrom: {secretKeyRef: {name: orchestrator-secrets, key: ADMIN_API_KEY}}}
+            - {name: OPERATOR_API_KEY, valueFrom: {secretKeyRef: {name: orchestrator-secrets, key: OPERATOR_API_KEY}}}
+            - {name: READ_ONLY_API_KEY, valueFrom: {secretKeyRef: {name: orchestrator-secrets, key: READ_ONLY_API_KEY}}}
+            - {name: WORKER_API_KEY, valueFrom: {secretKeyRef: {name: orchestrator-secrets, key: WORKER_API_KEY}}}
+          ports: [{containerPort: 8000}]
+          livenessProbe: {httpGet: {path: /health, port: 8000}, periodSeconds: 10}
+          readinessProbe: {httpGet: {path: /ready, port: 8000}, periodSeconds: 5}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {memory: 512Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: api-server, namespace: orchestrator}
+spec:
+  selector: {app: api-server}
+  ports: [{port: 8000, targetPort: 8000}]

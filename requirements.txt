@@ -1,9 +1,0 @@
-fastapi
-uvicorn
-sqlalchemy
-psycopg[binary]
-alembic
-pydantic-settings
-docker
-httpx
-pytest
